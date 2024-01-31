@@ -505,12 +505,29 @@ class SnowflakeSqlApiOperator(SQLExecuteQueryOperator):
             deferrable=self.deferrable,
         )
         self.query_ids = self._hook.execute_query(
-            self.sql, statement_count=self.statement_count, bindings=self.bindings  # type: ignore[arg-type]
+            self.sql,  # type: ignore[arg-type]
+            statement_count=self.statement_count,
+            bindings=self.bindings,
         )
         self.log.info("List of query ids %s", self.query_ids)
 
         if self.do_xcom_push:
             context["ti"].xcom_push(key="query_ids", value=self.query_ids)
+
+        succeeded_query_ids = []
+        for query_id in self.query_ids:
+            self.log.info("Retrieving status for query id %s", query_id)
+            statement_status = self._hook.get_sql_api_query_status(query_id)
+            if statement_status.get("status") == "running":
+                break
+            elif statement_status.get("status") == "success":
+                succeeded_query_ids.append(query_id)
+            else:
+                raise AirflowException(f"{statement_status.get('status')}: {statement_status.get('message')}")
+
+        if len(self.query_ids) == len(succeeded_query_ids):
+            self.log.info("%s completed successfully.", self.task_id)
+            return
 
         if self.deferrable:
             self.defer(

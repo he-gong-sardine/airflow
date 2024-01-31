@@ -15,7 +15,11 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-"""Base operator for all operators."""
+"""
+Base operator for all operators.
+
+:sphinx-autoapi-skip:
+"""
 from __future__ import annotations
 
 import abc
@@ -26,7 +30,6 @@ import functools
 import logging
 import sys
 import warnings
-from abc import ABCMeta, abstractmethod
 from datetime import datetime, timedelta
 from inspect import signature
 from types import FunctionType
@@ -34,12 +37,9 @@ from typing import (
     TYPE_CHECKING,
     Any,
     Callable,
-    ClassVar,
     Collection,
     Iterable,
-    List,
     Sequence,
-    Type,
     TypeVar,
     Union,
     cast,
@@ -103,12 +103,10 @@ if TYPE_CHECKING:
     import jinja2  # Slow import.
     from sqlalchemy.orm import Session
 
-    from airflow.models.abstractoperator import (
-        TaskStateChangeCallback,
-    )
+    from airflow.models.abstractoperator import TaskStateChangeCallback
+    from airflow.models.baseoperatorlink import BaseOperatorLink
     from airflow.models.dag import DAG
     from airflow.models.operator import Operator
-    from airflow.models.taskinstancekey import TaskInstanceKey
     from airflow.models.xcom_arg import XComArg
     from airflow.ti_deps.deps.base_ti_dep import BaseTIDep
     from airflow.triggers.base import BaseTrigger
@@ -253,6 +251,7 @@ def partial(
     on_failure_callback: None | TaskStateChangeCallback | list[TaskStateChangeCallback] | ArgNotSet = NOTSET,
     on_success_callback: None | TaskStateChangeCallback | list[TaskStateChangeCallback] | ArgNotSet = NOTSET,
     on_retry_callback: None | TaskStateChangeCallback | list[TaskStateChangeCallback] | ArgNotSet = NOTSET,
+    on_skipped_callback: None | TaskStateChangeCallback | list[TaskStateChangeCallback] | ArgNotSet = NOTSET,
     run_as_user: str | None | ArgNotSet = NOTSET,
     executor_config: dict | None | ArgNotSet = NOTSET,
     inlets: Any | None | ArgNotSet = NOTSET,
@@ -262,6 +261,7 @@ def partial(
     doc_json: str | None | ArgNotSet = NOTSET,
     doc_yaml: str | None | ArgNotSet = NOTSET,
     doc_rst: str | None | ArgNotSet = NOTSET,
+    logger_name: str | None | ArgNotSet = NOTSET,
     **kwargs,
 ) -> OperatorPartial:
     from airflow.models.dag import DagContext
@@ -315,6 +315,7 @@ def partial(
         "on_failure_callback": on_failure_callback,
         "on_retry_callback": on_retry_callback,
         "on_success_callback": on_success_callback,
+        "on_skipped_callback": on_skipped_callback,
         "run_as_user": run_as_user,
         "executor_config": executor_config,
         "inlets": inlets,
@@ -325,6 +326,7 @@ def partial(
         "doc_md": doc_md,
         "doc_rst": doc_rst,
         "doc_yaml": doc_yaml,
+        "logger_name": logger_name,
     }
 
     # Inject DAG-level default args into args provided to this function.
@@ -440,7 +442,7 @@ class BaseOperatorMeta(abc.ABCMeta):
 
             result = func(self, **kwargs, default_args=default_args)
 
-            # Store the args passed to init -- we need them to support task.map serialzation!
+            # Store the args passed to init -- we need them to support task.map serialization!
             self._BaseOperator__init_kwargs.update(kwargs)  # type: ignore
 
             # Set upstream task defined by XComArgs passed to template fields of the operator.
@@ -601,6 +603,11 @@ class BaseOperator(AbstractOperator, metaclass=BaseOperatorMeta):
         that it is executed when retries occur.
     :param on_success_callback: much like the ``on_failure_callback`` except
         that it is executed when the task succeeds.
+    :param on_skipped_callback: much like the ``on_failure_callback`` except
+        that it is executed when skipped occur; this callback will be called only if AirflowSkipException get raised.
+        Explicitly it is NOT called if a task is not started to be executed because of a preceding branching
+        decision in the DAG or a trigger rule which causes execution to skip so that the task execution
+        is never scheduled.
     :param pre_execute: a function to be called immediately before task
         execution, receiving a context dictionary; raising an exception will
         prevent the task from being executed.
@@ -632,12 +639,7 @@ class BaseOperator(AbstractOperator, metaclass=BaseOperatorMeta):
         **Example**: to run this task in a specific docker container through
         the KubernetesExecutor ::
 
-            MyOperator(...,
-                executor_config={
-                    "KubernetesExecutor":
-                        {"image": "myCustomDockerImage"}
-                }
-            )
+            MyOperator(..., executor_config={"KubernetesExecutor": {"image": "myCustomDockerImage"}})
 
     :param do_xcom_push: if True, an XCom is pushed containing the Operator's
         result
@@ -653,6 +655,10 @@ class BaseOperator(AbstractOperator, metaclass=BaseOperatorMeta):
         that is visible in Task Instance details View in the Webserver
     :param doc_yaml: Add documentation (in YAML format) or notes to your Task objects
         that is visible in Task Instance details View in the Webserver
+    :param logger_name: Name of the logger used by the Operator to emit logs.
+        If set to `None` (default), the logger name will fall back to
+        `airflow.task.operators.{class.__module__}.{class.__name__}` (e.g. SimpleHttpOperator will have
+        *airflow.task.operators.airflow.providers.http.operators.http.SimpleHttpOperator* as logger).
     """
 
     # Implementing Operator.
@@ -672,7 +678,6 @@ class BaseOperator(AbstractOperator, metaclass=BaseOperatorMeta):
         "user_defined_macros",
         "user_defined_filters",
         "params",
-        "_log",
     )
 
     # each operator should override this class attr for shallow copy attrs.
@@ -706,6 +711,7 @@ class BaseOperator(AbstractOperator, metaclass=BaseOperatorMeta):
         "on_failure_callback",
         "on_success_callback",
         "on_retry_callback",
+        "on_skipped_callback",
         "do_xcom_push",
     }
 
@@ -765,6 +771,7 @@ class BaseOperator(AbstractOperator, metaclass=BaseOperatorMeta):
         on_failure_callback: None | TaskStateChangeCallback | list[TaskStateChangeCallback] = None,
         on_success_callback: None | TaskStateChangeCallback | list[TaskStateChangeCallback] = None,
         on_retry_callback: None | TaskStateChangeCallback | list[TaskStateChangeCallback] = None,
+        on_skipped_callback: None | TaskStateChangeCallback | list[TaskStateChangeCallback] = None,
         pre_execute: TaskPreExecuteHook | None = None,
         post_execute: TaskPostExecuteHook | None = None,
         trigger_rule: str = DEFAULT_TRIGGER_RULE,
@@ -783,6 +790,7 @@ class BaseOperator(AbstractOperator, metaclass=BaseOperatorMeta):
         doc_json: str | None = None,
         doc_yaml: str | None = None,
         doc_rst: str | None = None,
+        logger_name: str | None = None,
         **kwargs,
     ):
         from airflow.models.dag import DagContext
@@ -830,6 +838,7 @@ class BaseOperator(AbstractOperator, metaclass=BaseOperatorMeta):
         self.on_failure_callback = on_failure_callback
         self.on_success_callback = on_success_callback
         self.on_retry_callback = on_retry_callback
+        self.on_skipped_callback = on_skipped_callback
         self._pre_execute_hook = pre_execute
         self._post_execute_hook = post_execute
 
@@ -933,7 +942,8 @@ class BaseOperator(AbstractOperator, metaclass=BaseOperatorMeta):
         if dag:
             self.dag = dag
 
-        self._log = logging.getLogger("airflow.task.operators")
+        self._log_config_logger_name = "airflow.task.operators"
+        self._logger_name = logger_name
 
         # Lineage
         self.inlets: list = []
@@ -1151,9 +1161,7 @@ class BaseOperator(AbstractOperator, metaclass=BaseOperatorMeta):
             # This is equivalent to
             with DAG(...):
                 generate_content = GenerateContentOperator(task_id="generate_content")
-                send_email = EmailOperator(
-                    ..., html_content="{{ task_instance.xcom_pull('generate_content') }}"
-                )
+                send_email = EmailOperator(..., html_content="{{ task_instance.xcom_pull('generate_content') }}")
                 generate_content >> send_email
 
         """
@@ -1222,13 +1230,13 @@ class BaseOperator(AbstractOperator, metaclass=BaseOperatorMeta):
 
     def __getstate__(self):
         state = dict(self.__dict__)
-        del state["_log"]
+        if self._log:
+            del state["_log"]
 
         return state
 
     def __setstate__(self, state):
         self.__dict__ = state
-        self._log = logging.getLogger("airflow.task.operators")
 
     def render_template_fields(
         self,
@@ -1865,12 +1873,7 @@ def chain_linear(*elements: DependencyMixin | Sequence[DependencyMixin]):
 
     Then you can accomplish like so::
 
-        chain_linear(
-            op1,
-            [op2, op3],
-            [op4, op5, op6],
-            op7
-        )
+        chain_linear(op1, [op2, op3], [op4, op5, op6], op7)
 
     :param elements: a list of operators / lists of operators
     """
@@ -1891,39 +1894,30 @@ def chain_linear(*elements: DependencyMixin | Sequence[DependencyMixin]):
         raise ValueError("No dependencies were set. Did you forget to expand with `*`?")
 
 
-# pyupgrade assumes all type annotations can be lazily evaluated, but this is
-# not the case for attrs-decorated classes, since cattrs needs to evaluate the
-# annotation expressions at runtime, and Python before 3.9.0 does not lazily
-# evaluate those. Putting the expression in a top-level assignment statement
-# communicates this runtime requirement to pyupgrade.
-BaseOperatorClassList = List[Type[BaseOperator]]
-
-
-@attr.s(auto_attribs=True)
-class BaseOperatorLink(metaclass=ABCMeta):
-    """Abstract base class that defines how we get an operator link."""
-
-    operators: ClassVar[BaseOperatorClassList] = []
+def __getattr__(name):
     """
-    This property will be used by Airflow Plugins to find the Operators to which you want
-    to assign this Operator Link
+    PEP-562: Lazy loaded attributes on python modules.
 
-    :return: List of Operator classes used by task for which you want to create extra link
+    :meta private:
     """
+    path = __deprecated_imports.get(name)
+    if not path:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
-    @property
-    @abstractmethod
-    def name(self) -> str:
-        """Name of the link. This will be the button name on the task UI."""
+    from airflow.utils.module_loading import import_string
 
-    @abstractmethod
-    def get_link(self, operator: BaseOperator, *, ti_key: TaskInstanceKey) -> str:
-        """Link to external system.
+    warnings.warn(
+        f"Import `{__name__}.{name}` is deprecated. Please use `{path}.{name}`.",
+        RemovedInAirflow3Warning,
+        stacklevel=2,
+    )
+    val = import_string(f"{path}.{name}")
 
-        Note: The old signature of this function was ``(self, operator, dttm: datetime)``. That is still
-        supported at runtime but is deprecated.
+    # Store for next time
+    globals()[name] = val
+    return val
 
-        :param operator: The Airflow operator object this link is associated to.
-        :param ti_key: TaskInstance ID to return link for.
-        :return: link to external system
-        """
+
+__deprecated_imports = {
+    "BaseOperatorLink": "airflow.models.baseoperatorlink",
+}

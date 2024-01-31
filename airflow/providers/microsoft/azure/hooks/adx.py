@@ -29,12 +29,15 @@ import warnings
 from functools import cached_property
 from typing import TYPE_CHECKING, Any
 
-from azure.identity import DefaultAzureCredential
 from azure.kusto.data import ClientRequestProperties, KustoClient, KustoConnectionStringBuilder
 from azure.kusto.data.exceptions import KustoServiceError
 
 from airflow.exceptions import AirflowException, AirflowProviderDeprecationWarning
 from airflow.hooks.base import BaseHook
+from airflow.providers.microsoft.azure.utils import (
+    add_managed_identity_connection_widgets,
+    get_sync_default_azure_credential,
+)
 
 if TYPE_CHECKING:
     from azure.kusto.data.response import KustoResponseDataSetV2
@@ -80,6 +83,7 @@ class AzureDataExplorerHook(BaseHook):
     hook_name = "Azure Data Explorer"
 
     @classmethod
+    @add_managed_identity_connection_widgets
     def get_connection_form_widgets(cls) -> dict[str, Any]:
         """Returns connection widgets to add to connection form."""
         from flask_appbuilder.fieldwidgets import BS3PasswordFieldWidget, BS3TextFieldWidget
@@ -138,7 +142,9 @@ class AzureDataExplorerHook(BaseHook):
                 warnings.warn(
                     f"Conflicting params `{key}` and `{backcompat_key}` found in extras for conn "
                     f"{self.conn_id}. Using value for `{key}`.  Please ensure this is the correct value "
-                    f"and remove the backcompat key `{backcompat_key}`."
+                    f"and remove the backcompat key `{backcompat_key}`.",
+                    UserWarning,
+                    stacklevel=2,
                 )
 
         def get_required_param(name: str) -> str:
@@ -192,9 +198,15 @@ class AzureDataExplorerHook(BaseHook):
         elif auth_method == "AAD_DEVICE":
             kcsb = KustoConnectionStringBuilder.with_aad_device_authentication(cluster)
         elif auth_method == "AZURE_TOKEN_CRED":
+            managed_identity_client_id = conn.extra_dejson.get("managed_identity_client_id")
+            workload_identity_tenant_id = conn.extra_dejson.get("workload_identity_tenant_id")
+            credential = get_sync_default_azure_credential(
+                managed_identity_client_id=managed_identity_client_id,
+                workload_identity_tenant_id=workload_identity_tenant_id,
+            )
             kcsb = KustoConnectionStringBuilder.with_azure_token_credential(
                 connection_string=cluster,
-                credential=DefaultAzureCredential(),
+                credential=credential,
             )
         else:
             raise AirflowException(f"Unknown authentication method: {auth_method}")

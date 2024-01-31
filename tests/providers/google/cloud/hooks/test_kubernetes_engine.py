@@ -51,6 +51,7 @@ IMPERSONATE_CHAIN = ["impersonate", "this", "test"]
 OPERATION_NAME = "test-operation-name"
 
 
+@pytest.mark.db_test
 class TestGKEHookClient:
     def test_delegate_to_runtime_error(self):
         with pytest.raises(RuntimeError):
@@ -62,7 +63,6 @@ class TestGKEHookClient:
     @mock.patch(GKE_STRING.format("GKEHook.get_credentials"))
     @mock.patch(GKE_STRING.format("ClusterManagerClient"))
     def test_gke_cluster_client_creation(self, mock_client, mock_get_creds):
-
         result = self.gke_hook.get_conn()
         mock_client.assert_called_once_with(credentials=mock_get_creds.return_value, client_info=CLIENT_INFO)
         assert mock_client.return_value == result
@@ -312,6 +312,8 @@ class TestGKEPodAsyncHook:
         return GKEPodAsyncHook(
             cluster_url=CLUSTER_URL,
             ssl_ca_cert=SSL_CA_CERT,
+            gcp_conn_id=GCP_CONN_ID,
+            impersonation_chain=IMPERSONATE_CHAIN,
         )
 
     @pytest.mark.asyncio
@@ -405,7 +407,12 @@ class TestGKEPodHook:
         with mock.patch(
             BASE_STRING.format("GoogleBaseHook.__init__"), new=mock_base_gcp_hook_default_project_id
         ):
-            self.gke_hook = GKEPodHook(gcp_conn_id="test", ssl_ca_cert=None, cluster_url=None)
+            self.gke_hook = GKEPodHook(
+                gcp_conn_id="test",
+                impersonation_chain=IMPERSONATE_CHAIN,
+                ssl_ca_cert=None,
+                cluster_url=None,
+            )
         self.gke_hook._client = mock.Mock()
 
         def refresh_token(request):
@@ -443,3 +450,34 @@ class TestGKEPodHook:
 
     def _get_credentials(self):
         return self.credentials
+
+    @pytest.mark.parametrize(
+        "disable_tcp_keepalive, expected",
+        (
+            (True, False),
+            (None, True),
+            (False, True),
+        ),
+    )
+    @mock.patch(GKE_STRING.format("_enable_tcp_keepalive"))
+    def test_disable_tcp_keepalive(
+        self,
+        mock_enable,
+        disable_tcp_keepalive,
+        expected,
+    ):
+        with mock.patch(
+            BASE_STRING.format("GoogleBaseHook.__init__"), new=mock_base_gcp_hook_default_project_id
+        ):
+            gke_hook = GKEPodHook(
+                gcp_conn_id="test",
+                impersonation_chain=IMPERSONATE_CHAIN,
+                ssl_ca_cert=None,
+                cluster_url=None,
+                disable_tcp_keepalive=disable_tcp_keepalive,
+            )
+        gke_hook.get_credentials = self._get_credentials
+
+        api_conn = gke_hook.get_conn()
+        assert mock_enable.called is expected
+        assert isinstance(api_conn, kubernetes.client.api_client.ApiClient)

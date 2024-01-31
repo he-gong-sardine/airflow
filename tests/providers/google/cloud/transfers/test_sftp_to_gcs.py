@@ -22,9 +22,12 @@ import os
 from unittest import mock
 
 import pytest
+import logging
 
 from airflow.exceptions import AirflowException
 from airflow.providers.google.cloud.transfers.sftp_to_gcs import SFTPToGCSOperator
+from io import BytesIO
+from unittest.mock import MagicMock, mock_open, call, patch
 
 TASK_ID = "test-gcs-to-sftp-operator"
 GCP_CONN_ID = "GCP_CONN_ID"
@@ -49,7 +52,6 @@ SOURCE_FILES_LIST = [
 
 DESTINATION_PATH_DIR = "destination_dir"
 DESTINATION_PATH_FILE = "destination_dir/copy.txt"
-
 
 class TestSFTPToGCSOperator:
     @mock.patch("airflow.providers.google.cloud.transfers.sftp_to_gcs.GCSHook")
@@ -252,3 +254,60 @@ class TestSFTPToGCSOperator:
 
         err = ctx.value
         assert "Only one wildcard '*' is allowed in source_path parameter" in str(err)
+
+class TestSFTPToGCSOperatorStream:
+
+    def setup_method(self):
+        # setup @mock.patch
+        patcher_sftp = mock.patch("airflow.providers.google.cloud.transfers.sftp_to_gcs.SFTPHook")
+        self.mock_sftp_hook = patcher_sftp.start()
+        patcher_gcs = mock.patch("airflow.providers.google.cloud.transfers.sftp_to_gcs.GCSHook")
+        self.mock_gcs_hook = patcher_gcs.start()
+
+        self.task = SFTPToGCSOperator(
+            task_id="test_task",
+            source_path=SOURCE_OBJECT_NO_WILDCARD,
+            destination_bucket=TEST_BUCKET,
+            destination_path=DESTINATION_PATH_FILE,
+            use_stream=True,
+            sftp_conn_id=SFTP_CONN_ID,
+            gcp_conn_id=GCP_CONN_ID,
+        )
+
+    def teardown_method(self):
+        self.mock_sftp_hook.stop()
+        self.mock_gcs_hook.stop()
+    
+    def test_stream_single_object_default_method(self):
+        # Use 'upload_from_file' method by default
+        mock_dest_blob, mock_temp_dest_blob = MagicMock(), MagicMock()
+        self.mock_gcs_hook.return_value.get_conn.return_value.bucket.return_value.blob.side_effect = [mock_dest_blob, mock_temp_dest_blob]
+        self.task.execute(None)
+        mock_temp_dest_blob.upload_from_file.assert_called()
+
+    def test_stream_single_object_getfo_method(self):
+        mock_dest_blob, mock_temp_dest_blob = MagicMock(), MagicMock()
+        self.task.stream_method = 'getfo'
+        self.task.execute(None)
+        self.mock_sftp_hook.return_value.get_conn.assert_called()
+
+    def test_temp_file_handling(self):
+        # Test handling of existing temporary files from previous attempts
+        self.mock_gcs_hook.return_value.get_conn.return_value.bucket.return_value.blob.return_value.exists.return_value = True
+        with mock.patch.object(self.task.log, "warning") as mock_log_warning:
+            self.task.execute(None)
+            mock_log_warning.assert_called_with(mock.ANY)
+            self.mock_gcs_hook.return_value.get_conn.return_value.bucket.return_value.blob.return_value.delete.assert_called()
+
+    def test_error_handling(self):
+        # Simulate an error during streaming and verify it's handled correctly
+        self.mock_gcs_hook.return_value.bucket.return_value.blob.return_value.open.side_effect = Exception("Test error")
+        with pytest.raises(Exception) as excinfo:
+            self.task.execute(None)
+            assert "Test error" in str(excinfo.value)
+   
+    def test_file_move(self):
+        # Test the behavior of moving the source file after successful upload
+        self.task.move_object = True
+        self.task.execute(None)
+        self.mock_sftp_hook.return_value.delete_file.assert_called_with(self.task.source_path)

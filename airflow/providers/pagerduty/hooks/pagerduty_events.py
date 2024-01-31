@@ -47,8 +47,8 @@ class PagerdutyEventsHook(BaseHook):
     conn_type = "pagerduty_events"
     hook_name = "Pagerduty Events"
 
-    @staticmethod
-    def get_ui_field_behaviour() -> dict[str, Any]:
+    @classmethod
+    def get_ui_field_behaviour(cls) -> dict[str, Any]:
         """Returns custom field behaviour."""
         return {
             "hidden_fields": ["port", "login", "schema", "host", "extra"],
@@ -122,7 +122,7 @@ class PagerdutyEventsHook(BaseHook):
             "This method will be deprecated. Please use the "
             "`PagerdutyEventsHook.send_event` to interact with the Events API",
             AirflowProviderDeprecationWarning,
-            stacklevel=1,
+            stacklevel=2,
         )
 
         data = PagerdutyEventsHook.prepare_event_data(

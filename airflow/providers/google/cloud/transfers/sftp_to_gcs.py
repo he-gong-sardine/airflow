@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import os
 from tempfile import NamedTemporaryFile
-from typing import TYPE_CHECKING, Sequence
+from typing import TYPE_CHECKING, Sequence, Callable
 
 from airflow.exceptions import AirflowException
 from airflow.models import BaseOperator
@@ -32,7 +32,6 @@ if TYPE_CHECKING:
 
 
 WILDCARD = "*"
-
 
 class SFTPToGCSOperator(BaseOperator):
     """
@@ -69,7 +68,23 @@ class SFTPToGCSOperator(BaseOperator):
         If set as a sequence, the identities from the list must grant
         Service Account Token Creator IAM role to the directly preceding identity, with first
         account from the list granting this role to the originating account (templated).
-    :param sftp_prefetch: Whether to enable SFTP prefetch, the default is True.
+    :param sftp_prefetch: Whether to enable SFTP prefetch, the default is True. 
+        It works when use_stream is False or when use_stream is True and stream_method is "getfo"
+    :param use_stream: Determines the method of file transfer between SFTP and GCS.
+        - If set to False (default), the file is downloaded to the worker's local storage and 
+          then uploaded to GCS. This may require significant disk space on the worker for large files.
+        - If set to True, the file is streamed directly from SFTP to GCS, which does not consume 
+          local disk space on the worker. 
+    :param stream_method: Specifies the method of file transfer between SFTP and GCS when use_stream is true.
+        - If set to "upload_from_file" (default), Google Cloud Storage's upload_from_file will be used.
+          This method includes robust error handling and retry mechanisms.
+        - If set to "getfo", Paramiko's getfo method will be used and fast for large file with prefetch. 
+    :param max_concurrent_prefetch_requests: (Optional) Specifies the maximum number of 
+        concurrent prefetch requests for the "getfo" method. This parameter is only relevant 
+        when stream_method is set to "getfo". When this is None (default), there is no limit. 
+    :param callback: (Optional) callback function (form: func(int, int)) that accepts the bytes 
+        transferred so far and the total bytes to be transferred. This parameter is only relevant 
+        when stream_method is set to "getfo". 
     """
 
     template_fields: Sequence[str] = (
@@ -92,13 +107,17 @@ class SFTPToGCSOperator(BaseOperator):
         move_object: bool = False,
         impersonation_chain: str | Sequence[str] | None = None,
         sftp_prefetch: bool = True,
+        use_stream: bool = False,
+        stream_method: str = "upload_from_file",
+        max_concurrent_prefetch_requests: int = 0,
+        callback: Callable[[int, int], None] | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
 
         self.source_path = source_path
-        self.destination_path = self._set_destination_path(destination_path)
-        self.destination_bucket = self._set_bucket_name(destination_bucket)
+        self.destination_path = destination_path
+        self.destination_bucket = destination_bucket
         self.gcp_conn_id = gcp_conn_id
         self.mime_type = mime_type
         self.gzip = gzip
@@ -106,8 +125,14 @@ class SFTPToGCSOperator(BaseOperator):
         self.move_object = move_object
         self.impersonation_chain = impersonation_chain
         self.sftp_prefetch = sftp_prefetch
+        self.use_stream = use_stream
+        self.stream_method = stream_method
+        self.max_concurrent_prefetch_requests = max_concurrent_prefetch_requests
+        self.callback = callback
 
     def execute(self, context: Context):
+        self.destination_path = self._set_destination_path(self.destination_path)
+        self.destination_bucket = self._set_bucket_name(self.destination_bucket)
         gcs_hook = GCSHook(
             gcp_conn_id=self.gcp_conn_id,
             impersonation_chain=self.impersonation_chain,
@@ -130,18 +155,22 @@ class SFTPToGCSOperator(BaseOperator):
 
             for file in files:
                 destination_path = file.replace(base_path, self.destination_path, 1)
-                self._copy_single_object(gcs_hook, sftp_hook, file, destination_path)
+                transfer_single_object = self._stream_single_object if self.use_stream else self._copy_single_object
+                transfer_single_object(sftp_hook, gcs_hook, file, destination_path)
 
         else:
             destination_object = (
                 self.destination_path if self.destination_path else self.source_path.rsplit("/", 1)[1]
             )
-            self._copy_single_object(gcs_hook, sftp_hook, self.source_path, destination_object)
+            if self.use_stream:
+                self._stream_single_object(sftp_hook, gcs_hook, self.source_path, destination_object)
+            else:
+                self._copy_single_object(sftp_hook, gcs_hook, self.source_path, destination_object)
 
     def _copy_single_object(
         self,
-        gcs_hook: GCSHook,
         sftp_hook: SFTPHook,
+        gcs_hook: GCSHook,
         source_path: str,
         destination_object: str,
     ) -> None:
@@ -168,6 +197,60 @@ class SFTPToGCSOperator(BaseOperator):
             self.log.info("Executing delete of %s", source_path)
             sftp_hook.delete_file(source_path)
 
+    def _stream_single_object(
+        self, 
+        sftp_hook: SFTPHook, 
+        gcs_hook: GCSHook, 
+        source_path: str, 
+        destination_object: str
+    ) -> None:
+        """Helper function to stream a single object with robust handling and logging."""
+        self.log.info(
+            "Starting stream of %s to gs://%s/%s using %s method",
+            source_path,
+            self.destination_bucket,
+            destination_object,
+            self.stream_method
+        )
+
+        client = gcs_hook.get_conn()
+        dest_bucket = client.bucket(self.destination_bucket)
+        temp_destination_object = f"{destination_object}.tmp"
+        dest_blob = dest_bucket.blob(destination_object)
+        temp_dest_blob = dest_bucket.blob(temp_destination_object)
+
+        # Check and delete any existing temp file from previous failed attempts
+        if temp_dest_blob.exists():
+            self.log.warning("Temporary file %s found, deleting for fresh upload.", temp_destination_object)
+            temp_dest_blob.delete()
+
+        if self.stream_method == "getfo":
+            with dest_blob.open("wb") as write_stream:
+                sftp_hook.get_conn().getfo(
+                    source_path,
+                    write_stream,
+                    callback=self.callback,
+                    prefetch=self.sftp_prefetch,
+                    max_concurrent_prefetch_requests=self.max_concurrent_prefetch_requests
+                )
+        elif self.stream_method == "upload_from_file":
+            with sftp_hook.get_conn().file(source_path, 'rb') as source_stream:
+                temp_dest_blob.upload_from_file(source_stream)
+        else:
+            raise ValueError("Invalid transfer method selected")
+
+        # Copy from temp blob to final destination
+        if temp_dest_blob.exists():
+            self.log.info("Copying from temporary location to final destination.")
+            dest_bucket.copy_blob(temp_dest_blob, dest_bucket, destination_object)
+            temp_dest_blob.delete()  # Clean up the temp file
+        else:
+            self.log.error("Upload failed: Temporary file not found after upload.")
+
+        if self.move_object:
+            self.log.info("Deleting source file %s", source_path)
+            sftp_hook.delete_file(source_path)
+            
     @staticmethod
     def _set_destination_path(path: str | None) -> str:
         if path is not None:

@@ -18,6 +18,7 @@
 """Hook for Mongo DB."""
 from __future__ import annotations
 
+import warnings
 from ssl import CERT_NONE
 from typing import TYPE_CHECKING, Any, overload
 from urllib.parse import quote_plus, urlunsplit
@@ -25,6 +26,7 @@ from urllib.parse import quote_plus, urlunsplit
 import pymongo
 from pymongo import MongoClient, ReplaceOne
 
+from airflow.exceptions import AirflowProviderDeprecationWarning
 from airflow.hooks.base import BaseHook
 
 if TYPE_CHECKING:
@@ -57,10 +59,19 @@ class MongoHook(BaseHook):
     conn_type = "mongo"
     hook_name = "MongoDB"
 
-    def __init__(self, conn_id: str = default_conn_name, *args, **kwargs) -> None:
+    def __init__(self, mongo_conn_id: str = default_conn_name, *args, **kwargs) -> None:
         super().__init__()
-        self.mongo_conn_id = conn_id
-        self.connection = self.get_connection(conn_id)
+        if conn_id := kwargs.pop("conn_id", None):
+            warnings.warn(
+                "Parameter `conn_id` is deprecated and will be removed in a future releases. "
+                "Please use `mongo_conn_id` instead.",
+                AirflowProviderDeprecationWarning,
+                stacklevel=2,
+            )
+            mongo_conn_id = conn_id
+
+        self.mongo_conn_id = mongo_conn_id
+        self.connection = self.get_connection(self.mongo_conn_id)
         self.extras = self.connection.extra_dejson.copy()
         self.client: MongoClient | None = None
         self.uri = self._create_uri()
@@ -366,3 +377,27 @@ class MongoHook(BaseHook):
         collection = self.get_collection(mongo_collection, mongo_db=mongo_db)
 
         return collection.delete_many(filter_doc, **kwargs)
+
+    def distinct(
+        self,
+        mongo_collection: str,
+        distinct_key: str,
+        filter_doc: dict | None = None,
+        mongo_db: str | None = None,
+        **kwargs,
+    ) -> list[Any]:
+        """
+        Returns a list of distinct values for the given key across a collection.
+
+        https://pymongo.readthedocs.io/en/stable/api/pymongo/collection.html#pymongo.collection.Collection.distinct
+
+        :param mongo_collection: The name of the collection to perform distinct on.
+        :param distinct_key: The field to return distinct values from.
+        :param filter_doc: A query that matches the documents get distinct values from.
+            Can be omitted; then will cover the entire collection.
+        :param mongo_db: The name of the database to use.
+            Can be omitted; then the database from the connection string is used.
+        """
+        collection = self.get_collection(mongo_collection, mongo_db=mongo_db)
+
+        return collection.distinct(distinct_key, filter=filter_doc, **kwargs)

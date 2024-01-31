@@ -26,7 +26,8 @@ from airflow.exceptions import AirflowException
 from airflow.providers.apache.druid.hooks.druid import DruidDbApiHook, DruidHook, IngestionType
 
 
-class TestDruidHook:
+@pytest.mark.db_test
+class TestDruidSubmitHook:
     def setup_method(self):
         import requests_mock
 
@@ -64,6 +65,7 @@ class TestDruidHook:
     def test_submit_ok(self, requests_mock):
         task_post = requests_mock.post(
             "http://druid-overlord:8081/druid/indexer/v1/task",
+            status_code=200,
             text='{"task":"9f8a7359-77d4-4612-b0cd-cc2f6a3c28de"}',
         )
         status_check = requests_mock.get(
@@ -80,6 +82,7 @@ class TestDruidHook:
     def test_submit_sql_based_ingestion_ok(self, requests_mock):
         task_post = requests_mock.post(
             "http://druid-overlord:8081/druid/v2/sql/task",
+            status_code=202,
             text='{"taskId":"9f8a7359-77d4-4612-b0cd-cc2f6a3c28de"}',
         )
         status_check = requests_mock.get(
@@ -157,6 +160,25 @@ class TestDruidHook:
         assert task_post.called_once
         assert status_check.called
         assert shutdown_post.called_once
+
+
+class TestDruidHook:
+    def setup_method(self):
+        import requests_mock
+
+        session = requests.Session()
+        adapter = requests_mock.Adapter()
+        session.mount("mock", adapter)
+
+        class TestDRuidhook(DruidHook):
+            self.is_sql_based_ingestion = False
+
+            def get_conn_url(self, ingestion_type: IngestionType = IngestionType.BATCH):
+                if ingestion_type == IngestionType.MSQ:
+                    return "http://druid-overlord:8081/druid/v2/sql/task"
+                return "http://druid-overlord:8081/druid/indexer/v1/task"
+
+        self.db_hook = TestDRuidhook()
 
     @patch("airflow.providers.apache.druid.hooks.druid.DruidHook.get_connection")
     def test_get_conn_url(self, mock_get_connection):

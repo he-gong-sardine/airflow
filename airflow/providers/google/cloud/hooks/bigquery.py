@@ -129,7 +129,8 @@ class BigQueryHook(GoogleBaseHook, DbApiHook):
 
     def get_conn(self) -> BigQueryConnection:
         """Get a BigQuery PEP 249 connection object."""
-        service = self.get_service()
+        http_authorized = self._authorize()
+        service = build("bigquery", "v2", http=http_authorized, cache_discovery=False)
         return BigQueryConnection(
             service=service,
             project_id=self.project_id,
@@ -144,6 +145,7 @@ class BigQueryHook(GoogleBaseHook, DbApiHook):
         warnings.warn(
             "This method will be deprecated. Please use `BigQueryHook.get_client` method",
             AirflowProviderDeprecationWarning,
+            stacklevel=2,
         )
         http_authorized = self._authorize()
         return build("bigquery", "v2", http=http_authorized, cache_discovery=False)
@@ -623,6 +625,7 @@ class BigQueryHook(GoogleBaseHook, DbApiHook):
             "This method is deprecated. Please use `BigQueryHook.create_empty_table` method with "
             "passing the `table_resource` object. This gives more flexibility than this method.",
             AirflowProviderDeprecationWarning,
+            stacklevel=2,
         )
         location = location or self.location
         src_fmt_configs = src_fmt_configs or {}
@@ -807,6 +810,7 @@ class BigQueryHook(GoogleBaseHook, DbApiHook):
         warnings.warn(
             "This method is deprecated, please use ``BigQueryHook.update_table`` method.",
             AirflowProviderDeprecationWarning,
+            stacklevel=2,
         )
         table_resource: dict[str, Any] = {}
 
@@ -957,7 +961,9 @@ class BigQueryHook(GoogleBaseHook, DbApiHook):
         :param project_id: The Google Cloud Project ID
         """
         warnings.warn(
-            "This method is deprecated. Please use ``update_dataset``.", AirflowProviderDeprecationWarning
+            "This method is deprecated. Please use ``update_dataset``.",
+            AirflowProviderDeprecationWarning,
+            stacklevel=2,
         )
         project_id = project_id or self.project_id
         if not dataset_id or not isinstance(dataset_id, str):
@@ -1006,7 +1012,9 @@ class BigQueryHook(GoogleBaseHook, DbApiHook):
         :return: List of tables associated with the dataset
         """
         warnings.warn(
-            "This method is deprecated. Please use ``get_dataset_tables``.", AirflowProviderDeprecationWarning
+            "This method is deprecated. Please use ``get_dataset_tables``.",
+            AirflowProviderDeprecationWarning,
+            stacklevel=2,
         )
         project_id = project_id or self.project_id
         tables = self.get_client().list_tables(
@@ -1196,7 +1204,9 @@ class BigQueryHook(GoogleBaseHook, DbApiHook):
         :return:
         """
         warnings.warn(
-            "This method is deprecated. Please use `delete_table`.", AirflowProviderDeprecationWarning
+            "This method is deprecated. Please use `delete_table`.",
+            AirflowProviderDeprecationWarning,
+            stacklevel=2,
         )
         return self.delete_table(table_id=deletion_dataset_table, not_found_ok=ignore_if_missing)
 
@@ -1249,7 +1259,11 @@ class BigQueryHook(GoogleBaseHook, DbApiHook):
         :param start_index: zero based index of the starting row to read.
         :return: list of rows
         """
-        warnings.warn("This method is deprecated. Please use `list_rows`.", AirflowProviderDeprecationWarning)
+        warnings.warn(
+            "This method is deprecated. Please use `list_rows`.",
+            AirflowProviderDeprecationWarning,
+            stacklevel=2,
+        )
         rows = self.list_rows(
             dataset_id=dataset_id,
             table_id=table_id,
@@ -1384,7 +1398,6 @@ class BigQueryHook(GoogleBaseHook, DbApiHook):
         def _build_new_schema(
             current_schema: list[dict[str, Any]], schema_fields_updates: list[dict[str, Any]]
         ) -> list[dict[str, Any]]:
-
             # Turn schema_field_updates into a dict keyed on field names
             schema_fields_updates_dict = {field["name"]: field for field in deepcopy(schema_fields_updates)}
 
@@ -1458,6 +1471,7 @@ class BigQueryHook(GoogleBaseHook, DbApiHook):
         warnings.warn(
             "This method is deprecated. Please use `BigQueryHook.cancel_job`.",
             AirflowProviderDeprecationWarning,
+            stacklevel=2,
         )
         if self.running_job_id:
             self.cancel_job(job_id=self.running_job_id)
@@ -1617,6 +1631,7 @@ class BigQueryHook(GoogleBaseHook, DbApiHook):
         warnings.warn(
             "This method is deprecated. Please use `BigQueryHook.insert_job`",
             AirflowProviderDeprecationWarning,
+            stacklevel=2,
         )
         job = self.insert_job(configuration=configuration, project_id=self.project_id)
         self.running_job_id = job.job_id
@@ -1714,6 +1729,7 @@ class BigQueryHook(GoogleBaseHook, DbApiHook):
         warnings.warn(
             "This method is deprecated. Please use `BigQueryHook.insert_job` method.",
             AirflowProviderDeprecationWarning,
+            stacklevel=2,
         )
 
         if not self.project_id:
@@ -1726,7 +1742,7 @@ class BigQueryHook(GoogleBaseHook, DbApiHook):
         # we check to make sure the passed source format is valid
         # if it's not, we raise a ValueError
         # Refer to this link for more details:
-        #   https://cloud.google.com/bigquery/docs/reference/rest/v2/jobs#configuration.query.tableDefinitions.(key).sourceFormat # noqa
+        #   https://cloud.google.com/bigquery/docs/reference/rest/v2/jobs#configuration.query.tableDefinitions.(key).sourceFormat
 
         if schema_fields is None and not autodetect:
             raise ValueError("You must either pass a schema or autodetect=True.")
@@ -1901,6 +1917,7 @@ class BigQueryHook(GoogleBaseHook, DbApiHook):
         warnings.warn(
             "This method is deprecated. Please use `BigQueryHook.insert_job` method.",
             AirflowProviderDeprecationWarning,
+            stacklevel=2,
         )
         if not self.project_id:
             raise ValueError("The project_id should be set")
@@ -1982,6 +1999,7 @@ class BigQueryHook(GoogleBaseHook, DbApiHook):
         warnings.warn(
             "This method is deprecated. Please use `BigQueryHook.insert_job` method.",
             AirflowProviderDeprecationWarning,
+            stacklevel=2,
         )
         if not self.project_id:
             raise ValueError("The project_id should be set")
@@ -2109,6 +2127,7 @@ class BigQueryHook(GoogleBaseHook, DbApiHook):
         warnings.warn(
             "This method is deprecated. Please use `BigQueryHook.insert_job` method.",
             AirflowProviderDeprecationWarning,
+            stacklevel=2,
         )
         if not self.project_id:
             raise ValueError("The project_id should be set")
@@ -2138,7 +2157,7 @@ class BigQueryHook(GoogleBaseHook, DbApiHook):
         # BigQuery also allows you to define how you want a table's schema to change
         # as a side effect of a query job
         # for more details:
-        #   https://cloud.google.com/bigquery/docs/reference/rest/v2/jobs#configuration.query.schemaUpdateOptions  # noqa
+        #   https://cloud.google.com/bigquery/docs/reference/rest/v2/jobs#configuration.query.schemaUpdateOptions
 
         allowed_schema_update_options = ["ALLOW_FIELD_ADDITION", "ALLOW_FIELD_RELAXATION"]
 
@@ -2776,7 +2795,7 @@ class BigQueryCursor(BigQueryBaseCursor):
         """
         sql = _bind_parameters(operation, parameters) if parameters else operation
         self.flush_results()
-        self.job_id = self.hook.run_query(sql)
+        self.job_id = self._run_query(sql)
 
         query_results = self._get_query_result()
         if "schema" in query_results:
@@ -2914,12 +2933,177 @@ class BigQueryCursor(BigQueryBaseCursor):
 
         return query_results
 
+    def _run_query(
+        self,
+        sql,
+        location: str | None = None,
+    ) -> str:
+        """Run job query."""
+        if not self.project_id:
+            raise ValueError("The project_id should be set")
+
+        configuration = self._prepare_query_configuration(sql)
+        job = self.hook.insert_job(configuration=configuration, project_id=self.project_id, location=location)
+
+        return job.job_id
+
+    def _prepare_query_configuration(
+        self,
+        sql,
+        destination_dataset_table: str | None = None,
+        write_disposition: str = "WRITE_EMPTY",
+        allow_large_results: bool = False,
+        flatten_results: bool | None = None,
+        udf_config: list | None = None,
+        use_legacy_sql: bool | None = None,
+        maximum_billing_tier: int | None = None,
+        maximum_bytes_billed: float | None = None,
+        create_disposition: str = "CREATE_IF_NEEDED",
+        query_params: list | None = None,
+        labels: dict | None = None,
+        schema_update_options: Iterable | None = None,
+        priority: str | None = None,
+        time_partitioning: dict | None = None,
+        api_resource_configs: dict | None = None,
+        cluster_fields: list[str] | None = None,
+        encryption_configuration: dict | None = None,
+    ):
+        """Helper method that prepare configuration for query."""
+        labels = labels or self.hook.labels
+        schema_update_options = list(schema_update_options or [])
+
+        priority = priority or self.hook.priority
+
+        if time_partitioning is None:
+            time_partitioning = {}
+
+        if not api_resource_configs:
+            api_resource_configs = self.hook.api_resource_configs
+        else:
+            _validate_value("api_resource_configs", api_resource_configs, dict)
+
+        configuration = deepcopy(api_resource_configs)
+
+        if "query" not in configuration:
+            configuration["query"] = {}
+        else:
+            _validate_value("api_resource_configs['query']", configuration["query"], dict)
+
+        if sql is None and not configuration["query"].get("query", None):
+            raise TypeError("`BigQueryBaseCursor.run_query` missing 1 required positional argument: `sql`")
+
+        # BigQuery also allows you to define how you want a table's schema to change
+        # as a side effect of a query job
+        # for more details:
+        #   https://cloud.google.com/bigquery/docs/reference/rest/v2/jobs#configuration.query.schemaUpdateOptions
+
+        allowed_schema_update_options = ["ALLOW_FIELD_ADDITION", "ALLOW_FIELD_RELAXATION"]
+
+        if not set(allowed_schema_update_options).issuperset(set(schema_update_options)):
+            raise ValueError(
+                f"{schema_update_options} contains invalid schema update options."
+                f" Please only use one or more of the following options: {allowed_schema_update_options}"
+            )
+
+        if schema_update_options:
+            if write_disposition not in ["WRITE_APPEND", "WRITE_TRUNCATE"]:
+                raise ValueError(
+                    "schema_update_options is only "
+                    "allowed if write_disposition is "
+                    "'WRITE_APPEND' or 'WRITE_TRUNCATE'."
+                )
+
+        if destination_dataset_table:
+            destination_project, destination_dataset, destination_table = self.hook.split_tablename(
+                table_input=destination_dataset_table, default_project_id=self.project_id
+            )
+
+            destination_dataset_table = {  # type: ignore
+                "projectId": destination_project,
+                "datasetId": destination_dataset,
+                "tableId": destination_table,
+            }
+
+        if cluster_fields:
+            cluster_fields = {"fields": cluster_fields}  # type: ignore
+
+        query_param_list: list[tuple[Any, str, str | bool | None | dict, type | tuple[type]]] = [
+            (sql, "query", None, (str,)),
+            (priority, "priority", priority, (str,)),
+            (use_legacy_sql, "useLegacySql", self.use_legacy_sql, bool),
+            (query_params, "queryParameters", None, list),
+            (udf_config, "userDefinedFunctionResources", None, list),
+            (maximum_billing_tier, "maximumBillingTier", None, int),
+            (maximum_bytes_billed, "maximumBytesBilled", None, float),
+            (time_partitioning, "timePartitioning", {}, dict),
+            (schema_update_options, "schemaUpdateOptions", None, list),
+            (destination_dataset_table, "destinationTable", None, dict),
+            (cluster_fields, "clustering", None, dict),
+        ]
+
+        for param, param_name, param_default, param_type in query_param_list:
+            if param_name not in configuration["query"] and param in [None, {}, ()]:
+                if param_name == "timePartitioning":
+                    param_default = _cleanse_time_partitioning(destination_dataset_table, time_partitioning)
+                param = param_default
+
+            if param in [None, {}, ()]:
+                continue
+
+            _api_resource_configs_duplication_check(param_name, param, configuration["query"])
+
+            configuration["query"][param_name] = param
+
+            # check valid type of provided param,
+            # it last step because we can get param from 2 sources,
+            # and first of all need to find it
+
+            _validate_value(param_name, configuration["query"][param_name], param_type)
+
+            if param_name == "schemaUpdateOptions" and param:
+                self.log.info("Adding experimental 'schemaUpdateOptions': %s", schema_update_options)
+
+            if param_name == "destinationTable":
+                for key in ["projectId", "datasetId", "tableId"]:
+                    if key not in configuration["query"]["destinationTable"]:
+                        raise ValueError(
+                            "Not correct 'destinationTable' in "
+                            "api_resource_configs. 'destinationTable' "
+                            "must be a dict with {'projectId':'', "
+                            "'datasetId':'', 'tableId':''}"
+                        )
+                else:
+                    configuration["query"].update(
+                        {
+                            "allowLargeResults": allow_large_results,
+                            "flattenResults": flatten_results,
+                            "writeDisposition": write_disposition,
+                            "createDisposition": create_disposition,
+                        }
+                    )
+
+        if (
+            "useLegacySql" in configuration["query"]
+            and configuration["query"]["useLegacySql"]
+            and "queryParameters" in configuration["query"]
+        ):
+            raise ValueError("Query parameters are not allowed when using legacy SQL")
+
+        if labels:
+            _api_resource_configs_duplication_check("labels", labels, configuration)
+            configuration["labels"] = labels
+
+        if encryption_configuration:
+            configuration["query"]["destinationEncryptionConfiguration"] = encryption_configuration
+
+        return configuration
+
 
 def _bind_parameters(operation: str, parameters: dict) -> str:
     """Helper method that binds parameters to a SQL query."""
     # inspired by MySQL Python Connector (conversion.py)
     string_parameters = {}  # type dict[str, str]
-    for (name, value) in parameters.items():
+    for name, value in parameters.items():
         if value is None:
             string_parameters[name] = "NULL"
         elif isinstance(value, str):
@@ -3087,12 +3271,29 @@ class BigQueryAsyncHook(GoogleBaseAsyncHook):
 
     sync_hook_class = BigQueryHook
 
+    def __init__(
+        self,
+        gcp_conn_id: str = "google_cloud_default",
+        impersonation_chain: str | Sequence[str] | None = None,
+        **kwargs,
+    ):
+        super().__init__(
+            gcp_conn_id=gcp_conn_id,
+            impersonation_chain=impersonation_chain,
+            **kwargs,
+        )
+
     async def get_job_instance(
         self, project_id: str | None, job_id: str | None, session: ClientSession
     ) -> Job:
         """Get the specified job resource by job ID and project ID."""
-        with await self.service_file_as_context() as f:
-            return Job(job_id=job_id, project=project_id, service_file=f, session=cast(Session, session))
+        token = await self.get_token(session=session)
+        return Job(
+            job_id=job_id,
+            project=project_id,
+            token=token,
+            session=cast(Session, session),
+        )
 
     async def get_job_status(self, job_id: str | None, project_id: str | None = None) -> dict[str, str]:
         async with ClientSession() as s:
@@ -3173,14 +3374,11 @@ class BigQueryAsyncHook(GoogleBaseAsyncHook):
         is_numeric_value_check = isinstance(pass_value_conv, float)
 
         error_msg = (
-            "Test failed.\nPass value:{pass_value_conv}\n"
-            "Tolerance:{tolerance_pct_str}\n"
-            "Query:\n{sql}\nResults:\n{records!s}"
-        ).format(
-            pass_value_conv=pass_value_conv,
-            tolerance_pct_str=f"{tolerance:.1%}" if tolerance else None,
-            sql=sql,
-            records=records,
+            f"Test failed.\n"
+            f"Pass value:{pass_value_conv}\n"
+            f"Tolerance:{f'{tolerance:.1%}' if tolerance else None}\n"
+            f"Query:\n{sql}\n"
+            f"Results:\n{records!s}"
         )
 
         if not is_numeric_value_check:
@@ -3315,6 +3513,18 @@ class BigQueryTableAsyncHook(GoogleBaseAsyncHook):
 
     sync_hook_class = BigQueryHook
 
+    def __init__(
+        self,
+        gcp_conn_id: str = "google_cloud_default",
+        impersonation_chain: str | Sequence[str] | None = None,
+        **kwargs,
+    ):
+        super().__init__(
+            gcp_conn_id=gcp_conn_id,
+            impersonation_chain=impersonation_chain,
+            **kwargs,
+        )
+
     async def get_table_client(
         self, dataset: str, table_id: str, project_id: str, session: ClientSession
     ) -> Table_async:
@@ -3327,11 +3537,11 @@ class BigQueryTableAsyncHook(GoogleBaseAsyncHook):
             access to the specified project.
         :param session: aiohttp ClientSession
         """
-        with await self.service_file_as_context() as file:
-            return Table_async(
-                dataset_name=dataset,
-                table_name=table_id,
-                project=project_id,
-                service_file=file,
-                session=cast(Session, session),
-            )
+        token = await self.get_token(session=session)
+        return Table_async(
+            dataset_name=dataset,
+            table_name=table_id,
+            project=project_id,
+            token=token,
+            session=cast(Session, session),
+        )
